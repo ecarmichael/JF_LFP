@@ -1,0 +1,113 @@
+function [pow, coh] = Quick_psd(cfg_in)
+
+%%
+sites = cfg_in.Chan_to_use;
+cfg = [];
+cfg.fc = sites;
+csc = LoadCSC(cfg);
+% get the psd
+cfg_psd = [];
+cfg_psd.hann_win = 2^11; % always make this in base 2 for speed
+
+for iSite = 1:length(sites)
+    [pow.(sites{iSite}(1:end-4)).pxx, pow.(sites{iSite}(1:end-4)).f] = pwelch(csc.data(iSite,:), hanning(cfg_psd.hann_win), cfg_psd.hann_win/2, cfg_psd.hann_win*4 , csc.cfg.hdr{1}.SamplingFrequency);
+end
+
+%% compute the coherence between site pairs.
+% set up combinations
+if length(sites) >1
+    site_comb = nchoosek(sites, 2); % geet all combinations of sites
+    labels = [];
+    for iComb = 1:length(site_comb);
+        label = [site_comb{iComb, 1}(1:end-4) '_' site_comb{iComb, 2}(1:end-4)];
+        S1 = strfind(sites, site_comb{iComb,1}); % find the corresponding
+        S2 = strfind(sites, site_comb{iComb,2});
+        S1 = find(not(cellfun('isempty', S1)));
+        S2 = find(not(cellfun('isempty', S2)));
+        [coh.(label).p, coh.(label).f] =mscohere(csc.data(S1,:), csc.data(S2,:),hanning(cfg_psd.hann_win), cfg_psd.hann_win/2, cfg_psd.hann_win*4 , csc.cfg.hdr{1}.SamplingFrequency);
+        labels{iComb} = label;
+    end
+end
+%% make a plot
+if length(sites)>1
+    c_ord = linspecer(length(site_comb));
+else
+    c_ord = linspecer(length(sites));
+end
+figure(221)
+subplot(2,3,1)
+pos = LoadPos([]);
+plot(pos.data(1,:), pos.data(2,:), '.')
+axis off
+title('Position')
+
+% plot a sample of the LFP
+subplot(2,3,[2:3])
+hold on
+loop  = 0;
+for iSite = 1:length(sites)
+    loop = loop+1;
+    plot(csc.tvec(1:floor(csc.cfg.hdr{1}.SamplingFrequency))-csc.tvec(1), csc.data(iSite,1:floor(csc.cfg.hdr{1}.SamplingFrequency))*1000+(loop),'color', c_ord(iSite,:))
+end
+set(gca, 'ytick', [1:loop], 'ylim', [0 (loop)+1],'yticklabels', sites)
+xlabel('Time (s)')
+
+
+subplot(2,3,5)
+for iSite = 1:length(sites)
+    hold on
+    plot(pow.(sites{iSite}(1:end-4)).f, 10*log10(pow.(sites{iSite}(1:end-4)).pxx), 'color', c_ord(iSite,:));
+end
+xlim([0 120])
+legend(sites)
+xlabel('Frequency (Hz)')
+ylabel('Power (db)')
+
+% plot the coherence (requires >=2 sites)
+if length(sites) >1
+    subplot(2,3,6)
+    for iPairs = 1:length(labels)
+        hold on
+        plot(coh.(labels{iPairs}).f, coh.(labels{iPairs}).p, 'color', c_ord(iPairs,:))
+    end
+    xlim([0 120])
+    ylim([0 1])
+    legend(labels, 'location', 'southeast')
+    xlabel('Frequency (Hz)')
+    ylabel('Coherence')
+end
+%% add a cross-frequency correlation matrix.
+
+if isfield(cfg_in, 'xfreq')
+    Fs = csc.cfg.hdr{1}.SamplingFrequency;
+    
+    [S,F,T,P] = spectrogram(csc.data(1,:),hanning(512),256,1:1:120,Fs); % spectrogram -- will take a while to compute!
+    
+    [r,p] = corrcoef(10*log10(P')); % correlation matrix (across frequencies) of spectrogram
+    
+    % plot
+    subplot(2,3,4)
+    imagesc(F,F,r);
+    axis xy; % flip the axis.  This always happens with imagesc.
+    caxis([0 0.5]);  %colorbar; grid on;
+    set(gca,'XLim',[0 120],'YLim',[0 120],'FontSize',14,'XTick',0:20:120,'YTick',0:20:120);
+    xlabel('Frequency (Hz)'); ylabel('Frequency (Hz)');
+    %     title('Cross-frequency correlation')
+end
+
+%% save the figure can be changed to "check.fig" for a matlab figure
+%set the figure
+cfg_fig = [];
+SetFigure(cfg_fig, gcf) % this is a script I wrote to change all the figure paramters to make them easier to see.  It uses an input config structure 'cfg_fig'.  if left empty it will use the defaults.
+
+% if isfield(PARAMS, 'fig_dir') % if you have a figure folder
+%     saveas(gcf, [PARAMS.fig_dir PARAMS.Subject '-' PARAMS.date '-check.png'])
+% end
+
+one_up_dir = fileparts(pwd);
+sess_name = strsplit(path, '/')
+saveas(gcf, [one_up_dir '/LFP_check.png'])
+saveas(gcf, [one_up_dir '/LFP_check.fig'])
+
+
+
